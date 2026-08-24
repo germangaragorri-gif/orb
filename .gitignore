@@ -1,0 +1,8 @@
+.env
+venv/
+__pycache__/
+*.csv
+*.log
+*_state_*.json
+state_*.json
+paper_state_*.json
