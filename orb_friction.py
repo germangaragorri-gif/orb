@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from orb_backtest import load_data, ACCOUNT_START
-from orb_engine import RISK_PCT, TARGET_R, simulate_day
+from orb_engine import RISK_PCT, TARGET_R, MAX_R_BPS, simulate_day
 
 # All frictions in basis points of price, so they scale correctly across
 # 13 years in which QQQ went from ~$70 to ~$700. Measured on 15 live trades
@@ -126,8 +126,8 @@ def validate(df):
             continue
         # orb_engine deducts the candle's quoted spread as its cost model; the
         # friction module models cost explicitly instead, so compare gross.
-        a = simulate_day(g, capital)
-        b = simulate_day_friction(g, capital)
+        a = simulate_day(g, capital)                       # engine now filters by MAX_R_BPS
+        b = simulate_day_friction(g, capital, max_r_bps=MAX_R_BPS)
         if (a is None) != (b is None):
             raise AssertionError(f"{day}: trade/no-trade mismatch")
         if a is not None:

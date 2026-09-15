@@ -26,9 +26,12 @@ Three actions, decided purely from the current New York time:
     not 16:00 - the window must fire comfortably before that cutoff or the
     close order would be rejected as outside trading hours.
 
-The strategy rule itself is untouched: first 5-min candle sets the range,
-enter at the open of the second candle in its direction, stop at the extreme
-of the first candle, target 10R, liquidate at EoD.
+The strategy rule: first 5-min candle sets the range, enter at the open of
+the second candle in its direction, stop at the extreme of the first candle,
+target 10R, liquidate at EoD. Plus one filter added 2026-09-15 and shared
+with the backtest via orb_engine.MAX_R_BPS: skip the day if the opening
+range is wider than 30 bps of price (those days lose even before costs;
+validated out of sample 2020-2026, see orb_friction.py).
 
 Every action is logged to trades_log.csv for comparison against the backtest.
 """
@@ -45,7 +48,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from metaapi_cloud_sdk import MetaApi
 
-from orb_engine import RISK_PCT, TARGET_R
+from orb_engine import RISK_PCT, TARGET_R, MAX_R_BPS
 
 load_dotenv()
 TOKEN = os.environ["METAAPI_TOKEN"]
@@ -127,18 +130,25 @@ def compute_signal(sess):
     if r_dollars <= 0:
         return {"trade": False, "reason": "zero_r"}
 
+    r_bps = r_dollars / entry_ref * 1e4
+    if r_bps > MAX_R_BPS:
+        return {"trade": False, "reason": "range_too_wide", "r_bps": r_bps}
+
     target_price = (entry_ref + TARGET_R * r_dollars) if long else (entry_ref - TARGET_R * r_dollars)
     return {
         "trade": True, "long": long, "entry_ref": entry_ref, "stop": stop_price,
-        "r_dollars": r_dollars, "target": target_price,
+        "r_dollars": r_dollars, "r_bps": r_bps, "target": target_price,
     }
 
 
-def mark_no_trade(state, now_et, reason):
-    print(f"{SYMBOL}: {reason} first candle, no trade today.")
+def mark_no_trade(state, now_et, sig):
+    reason = sig["reason"]
+    detail = f" (R={sig['r_bps']:.1f} bps > {MAX_R_BPS:.0f})" if "r_bps" in sig else ""
+    print(f"{SYMBOL}: {reason}{detail}, no trade today.")
     state.update(date=str(now_et.date()), entered=True, closed=True, position_id=None)
     save_state(state)
-    log_event({"date": now_et.date(), "event": f"no_trade_{reason}", "time": str(now_et)})
+    log_event({"date": now_et.date(), "event": f"no_trade_{reason}",
+               "r_bps": round(sig.get("r_bps", float("nan")), 2), "time": str(now_et)})
 
 
 async def submit_entry(connection, sig, balance, free_margin, state, now_et, path):
@@ -180,6 +190,7 @@ async def submit_entry(connection, sig, balance, free_margin, state, now_et, pat
         "date": now_et.date(), "event": "entry", "long": sig["long"], "volume": volume,
         "margin_per_unit": margin_per_unit, "free_margin": free_margin,
         "entry_signal": sig["entry_ref"], "stop": sig["stop"], "target": sig["target"],
+        "r_bps": round(sig["r_bps"], 2),
         "balance_before": balance, "position_id": position_id,
         "path": path, "latency_s": round(latency_s, 2), "time": str(submitted_at),
     })
@@ -230,7 +241,7 @@ async def do_entry_prewarm(state, now_et):
 
         sig = compute_signal(sess)
         if not sig["trade"]:
-            mark_no_trade(state, datetime.now(NY), sig["reason"])
+            mark_no_trade(state, datetime.now(NY), sig)
             return
 
         await submit_entry(connection, sig, balance, free_margin, state, datetime.now(NY), "prewarm")
@@ -250,7 +261,7 @@ async def do_entry(state, now_et):
 
     sig = compute_signal(sess)
     if not sig["trade"]:
-        mark_no_trade(state, now_et, sig["reason"])
+        mark_no_trade(state, now_et, sig)
         return
 
     connection = account.get_rpc_connection()

@@ -6,16 +6,24 @@ Rules (Zarattini & Aziz): first 5-min candle of the 9:30 ET session sets the
 range; enter at the open of the second candle in the direction of the first
 candle; stop at the extreme of the first candle; target 10R, or liquidate at
 end of day if not reached first.
+
+One addition to the paper (2026-09-15): skip days whose opening range is
+wider than MAX_R_BPS of price. On QQQ 2013-2026 the widest 20% of ranges
+(>30 bps) lose money even before execution costs; the threshold was chosen
+on 2013-2019 alone and improved 2020-2026 out of sample from +0.09R to
++0.21R per trade (see orb_friction.py and commit fde0595).
 """
 RISK_PCT = 0.01
 LEVERAGE = 20.0
 TARGET_R = 10.0
+MAX_R_BPS = 30.0
 
 
-def simulate_day(g, capital):
+def simulate_day(g, capital, max_r_bps=MAX_R_BPS):
     """g: one day's 5m bars (already sliced to the 09:30-16:00 session),
     with columns open/high/low/close/spread_price. Returns a trade dict, or
-    None if no trade was taken (doji, zero shares, etc.)."""
+    None if no trade was taken (doji, range too wide, zero shares, etc.).
+    Pass max_r_bps=None to reproduce the paper's unfiltered rule."""
     if len(g) < 2:
         return None
 
@@ -30,6 +38,8 @@ def simulate_day(g, capital):
     stop_price = l1 if long else h1
     r_dollars = abs(entry_price - stop_price)
     if r_dollars <= 0:
+        return None
+    if max_r_bps is not None and r_dollars / entry_price * 1e4 > max_r_bps:
         return None
 
     risk_shares = (capital * RISK_PCT) / r_dollars
