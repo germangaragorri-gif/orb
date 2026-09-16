@@ -15,7 +15,8 @@ load_dotenv()
 TOKEN = os.environ["METAAPI_TOKEN"]
 ACCOUNT_ID = os.environ["METAAPI_ACCOUNT_ID"]
 
-MAX_PAGES = 520  # ~5 years of 1m bars in RTH-only sessions
+MAX_PAGES = 3000
+STOP_BEFORE = datetime(2021, 5, 1, tzinfo=timezone.utc)  # align with QQQ 1m window
 
 
 async def download(account, symbol):
@@ -34,6 +35,8 @@ async def download(account, symbol):
         oldest = new_oldest
         cursor = oldest
         pages += 1
+        if oldest < STOP_BEFORE:
+            break
         if pages % 20 == 0:
             print(f"  {symbol}: page {pages}, back to {oldest}", flush=True)
     return all_candles
